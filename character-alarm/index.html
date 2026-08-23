@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>キャラボイスアラーム</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #ffe5f1, #e7f0ff);
+      color: #333;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .app {
+      width: 100%;
+      max-width: 460px;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 24px;
+      padding: 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+    }
+
+    h1 {
+      margin: 0 0 20px;
+      font-size: 24px;
+      text-align: center;
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: bold;
+      margin: 18px 0 8px;
+    }
+
+    .character-list {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .character-button {
+      flex: 1;
+      border: 2px solid transparent;
+      border-radius: 18px;
+      padding: 14px 8px;
+      background: #fff5fa;
+      cursor: pointer;
+      text-align: center;
+      transition: 0.2s;
+    }
+
+    .character-button.selected {
+      border-color: #ff6fae;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 18px rgba(255, 111, 174, 0.25);
+    }
+
+    .character-icon {
+      font-size: 36px;
+      margin-bottom: 4px;
+    }
+
+    .character-name {
+      font-size: 15px;
+      font-weight: bold;
+    }
+
+    .character-type {
+      font-size: 11px;
+      color: #777;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
+    .line-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .line-button {
+      width: 100%;
+      padding: 13px;
+      border-radius: 14px;
+      border: 2px solid #eee;
+      background: white;
+      text-align: left;
+      font-size: 14px;
+      line-height: 1.5;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .line-button.selected {
+      border-color: #6f8cff;
+      background: #f3f6ff;
+      font-weight: bold;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid #ddd;
+      font-size: 16px;
+      background: white;
+    }
+
+    .main-button {
+      width: 100%;
+      border: none;
+      border-radius: 14px;
+      padding: 14px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: 0.2s;
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    .play-btn {
+      background: #ff6fae;
+      color: white;
+    }
+
+    .alarm-btn {
+      background: #6f8cff;
+      color: white;
+    }
+
+    .cancel-btn {
+      background: #eee;
+      color: #333;
+    }
+
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      background: #f6f6f6;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-line;
+    }
+
+    .small {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #777;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <h1>キャラボイスアラーム</h1>
+
+    <div class="section-title">キャラを選択</div>
+    <div class="character-list" id="characterList"></div>
+
+    <div class="section-title">セリフを選択</div>
+    <div class="line-list" id="lineList"></div>
+
+    <button class="main-button play-btn" onclick="playSelectedVoice()">
+      この声で再生
+    </button>
+
+    <div class="section-title">アラーム時刻</div>
+    <input type="time" id="alarmTime" />
+
+    <button class="main-button alarm-btn" onclick="setAlarm()">
+      アラームを設定
+    </button>
+
+    <button class="main-button cancel-btn" onclick="cancelAlarm()">
+      アラームをキャンセル
+    </button>
+
+    <div class="status" id="status">
+      キャラとセリフを選んで再生できます。
+    </div>
+
+    <div class="small">
+      ※ ブラウザ標準の音声合成を使用しています。<br>
+      ※ スマホでは画面ロック中や省電力状態だと鳴らない場合があります。
+    </div>
+  </div>
+
+  <script>
+    const characters = {
+      a: {
+        name: "キャラA",
+        icon: "🌸",
+        type: "明るい元気系",
+        pitch: 1.4,
+        rate: 1.1,
+        color: "#fff5fa",
+        lines: [
+          "おはよう！今日も一緒にがんばろうね！",
+          "時間だよ！そろそろ起きないと遅れちゃうよ！",
+          "ねえねえ、起きて！今日もいい日になるよ！"
+        ]
+      },
+      b: {
+        name: "キャラB",
+        icon: "🌙",
+        type: "落ち着いたお姉さん系",
+        pitch: 1.0,
+        rate: 0.9,
+        color: "#f3f0ff",
+        lines: [
+          "おはようございます。そろそろ起きる時間ですよ。",
+          "無理せず、でも少しずつ動き始めましょう。",
+          "今日の予定を思い出して、ゆっくり準備しましょう。"
+        ]
+      },
+      c: {
+        name: "キャラC",
+        icon: "⚡",
+        type: "ツンデレ元気系",
+        pitch: 1.25,
+        rate: 1.25,
+        color: "#fff8e8",
+        lines: [
+          "ちょっと！いつまで寝てるの？早く起きなさいよ！",
+          "別に心配してるわけじゃないけど、時間だから！",
+          "ほら、起きる！今日もちゃんとやりなさい！"
+        ]
+      }
+    };
+
+    const characterList = document.getElementById("characterList");
+    const lineList = document.getElementById("lineList");
+    const status = document.getElementById("status");
+
+    let selectedCharacterId = "a";
+    let selectedLineIndex = 0;
+    let voices = [];
+    let alarmTimer = null;
+    let alarmData = null;
+
+    function loadVoices() {
+      voices = speechSynthesis.getVoices();
+    }
+
+    speechSynthesis.onvoiceschanged = loadVoices;
+    loadVoices();
+
+    function init() {
+      renderCharacters();
+      renderLines();
+    }
+
+    function renderCharacters() {
+      characterList.innerHTML = "";
+
+      Object.keys(characters).forEach(charId => {
+        const character = characters[charId];
+
+        const button = document.createElement("button");
+        button.className = "character-button";
+
+        if (charId === selectedCharacterId) {
+          button.classList.add("selected");
+        }
+
+        button.style.background = character.color;
+
+        button.innerHTML = `
+          <div class="character-icon">${character.icon}</div>
+          <div class="character-name">${character.name}</div>
+          <div class="character-type">${character.type}</div>
+        `;
+
+        button.onclick = () => {
+          selectedCharacterId = charId;
+          selectedLineIndex = 0;
+          renderCharacters();
+          renderLines();
+        };
+
+        characterList.appendChild(button);
+      });
+    }
+
+    function renderLines() {
+      lineList.innerHTML = "";
+
+      const character = characters[selectedCharacterId];
+
+      character.lines.forEach((line, index) => {
+        const button = document.createElement("button");
+        button.className = "line-button";
+
+        if (index === selectedLineIndex) {
+          button.classList.add("selected");
+        }
+
+        button.textContent = line;
+
+        button.onclick = () => {
+          selectedLineIndex = index;
+          renderLines();
+        };
+
+        lineList.appendChild(button);
+      });
+    }
+
+    function getJapaneseVoice() {
+      voices = speechSynthesis.getVoices();
+
+      return voices.find(voice => voice.lang === "ja-JP")
+        || voices.find(voice => voice.lang.startsWith("ja"))
+        || null;
+    }
+
+    function speak(charId, lineIndex) {
+      const character = characters[charId];
+      const text = character.lines[lineIndex];
+
+      speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "ja-JP";
+      utterance.pitch = character.pitch;
+      utterance.rate = character.rate;
+      utterance.volume = 1;
+
+      const japaneseVoice = getJapaneseVoice();
+
+      if (japaneseVoice) {
+        utterance.voice = japaneseVoice;
+      }
+
+      speechSynthesis.speak(utterance);
+    }
+
+    function playSelectedVoice() {
+      const character = characters[selectedCharacterId];
+      const line = character.lines[selectedLineIndex];
+
+      speak(selectedCharacterId, selectedLineIndex);
+
+      status.textContent =
+        `再生中：${character.name}\n` +
+        `セリフ：${line}`;
+    }
+
+    function setAlarm() {
+      const timeValue = document.getElementById("alarmTime").value;
+
+      if (!timeValue) {
+        status.textContent = "アラーム時刻を入力してください。";
+        return;
+      }
+
+      cancelAlarm(false);
+
+      const character = characters[selectedCharacterId];
+      const line = character.lines[selectedLineIndex];
+
+      const now = new Date();
+      const [hours, minutes] = timeValue.split(":").map(Number);
+
+      const alarmDate = new Date();
+      alarmDate.setHours(hours);
+      alarmDate.setMinutes(minutes);
+      alarmDate.setSeconds(0);
+      alarmDate.setMilliseconds(0);
+
+      if (alarmDate <= now) {
+        alarmDate.setDate(alarmDate.getDate() + 1);
+      }
+
+      const delay = alarmDate.getTime() - now.getTime();
+
+      alarmData = {
+        charId: selectedCharacterId,
+        lineIndex: selectedLineIndex,
+        time: timeValue
+      };
+
+      alarmTimer = setTimeout(() => {
+        speak(alarmData.charId, alarmData.lineIndex);
+
+        const alarmCharacter = characters[alarmData.charId];
+
+        status.textContent =
+          `アラーム再生中！\n` +
+          `キャラ：${alarmCharacter.name}\n` +
+          `セリフ：${alarmCharacter.lines[alarmData.lineIndex]}`;
+
+        alarmTimer = null;
+        alarmData = null;
+      }, delay);
+
+      status.textContent =
+        `アラームを設定しました。\n` +
+        `時刻：${timeValue}\n` +
+        `キャラ：${character.name}\n` +
+        `セリフ：${line}`;
+    }
+
+    function cancelAlarm(showMessage = true) {
+      if (alarmTimer) {
+        clearTimeout(alarmTimer);
+        alarmTimer = null;
+        alarmData = null;
+
+        if (showMessage) {
+          status.textContent = "アラームをキャンセルしました。";
+        }
+      } else {
+        if (showMessage) {
+          status.textContent = "設定中のアラームはありません。";
+        }
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

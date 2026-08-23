@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>おみくじができるよ</title>
+<style>
+    .button{
+        text-align: center;
+    }
+    button{
+        font-size: 20px;
+    }
+    img{
+        display: block;
+        margin: 0 auto;
+    }
+</style>
+</head>
+
+<body>
+    <div class="button"><button id="btn" type="button">クリック</button></div>
+    <img id="omikuji" src="" alt="">
+<script>
+    const imgSrc = ["./daikichi.png","./chuukichi.png","./syoukichi.png"];
+    let num = 0;
+    const btn = document.getElementById("btn");
+    btn.onclick = function() {
+        num++;
+        if (num == imgSrc.length) {
+            num = 0;
+        }
+        document.getElementById("omikuji").src = imgSrc[num];
+    }
+</script>
+</body>
+</html>

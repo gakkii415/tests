@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DAF – Delayed Auditory Feedback</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+font-family: -apple-system, ‘Helvetica Neue’, sans-serif;
+background: #fff;
+color: #000;
+min-height: 100dvh;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+padding: 32px 24px;
+gap: 32px;
+}
+
+h1 {
+font-size: 22px;
+font-weight: 700;
+letter-spacing: -0.5px;
+text-align: center;
+}
+
+.warning {
+background: #f5f5f5;
+border-left: 3px solid #000;
+padding: 12px 16px;
+font-size: 14px;
+line-height: 1.6;
+border-radius: 4px;
+width: 100%;
+max-width: 360px;
+}
+
+.warning strong { display: block; margin-bottom: 4px; }
+
+.toggle-btn {
+width: 200px;
+height: 64px;
+border-radius: 32px;
+border: 2.5px solid #000;
+background: #fff;
+color: #000;
+font-size: 18px;
+font-weight: 700;
+letter-spacing: 1px;
+cursor: pointer;
+-webkit-tap-highlight-color: transparent;
+touch-action: manipulation;
+}
+
+.toggle-btn.active {
+background: #000;
+color: #fff;
+}
+
+.delay-display {
+font-size: 56px;
+font-weight: 800;
+letter-spacing: -2px;
+line-height: 1;
+text-align: center;
+}
+
+.delay-display span {
+font-size: 20px;
+font-weight: 400;
+letter-spacing: 0;
+margin-left: 4px;
+vertical-align: middle;
+}
+
+.slider-wrap { width: 100%; max-width: 360px; }
+
+input[type=range] {
+-webkit-appearance: none;
+width: 100%;
+height: 6px;
+background: #e0e0e0;
+border-radius: 3px;
+outline: none;
+touch-action: manipulation;
+}
+
+input[type=range]::-webkit-slider-thumb {
+-webkit-appearance: none;
+width: 40px;
+height: 40px;
+background: #000;
+border-radius: 50%;
+cursor: pointer;
+}
+
+.presets {
+display: flex;
+gap: 10px;
+flex-wrap: wrap;
+justify-content: center;
+width: 100%;
+max-width: 360px;
+}
+
+.preset-btn {
+flex: 1 1 70px;
+height: 52px;
+border-radius: 26px;
+border: 2px solid #000;
+background: #fff;
+color: #000;
+font-size: 15px;
+font-weight: 600;
+cursor: pointer;
+-webkit-tap-highlight-color: transparent;
+touch-action: manipulation;
+}
+
+.preset-btn.selected {
+background: #000;
+color: #fff;
+}
+
+.status {
+font-size: 13px;
+color: #888;
+text-align: center;
+min-height: 18px;
+max-width: 320px;
+line-height: 1.5;
+}
+</style>
+
+</head>
+<body>
+
+<h1>Delayed Auditory<br>Feedback</h1>
+
+<div class="warning">
+  <strong>🎧 Bluetoothイヤホン必須</strong>
+  スピーカーで使うとハウリングします。<br>
+  ※ Safariで開いてください（iOSのChromeは録音不可）。
+</div>
+
+<button class="toggle-btn" id="toggleBtn">START</button>
+
+<div class="delay-display" id="delayDisplay">0<span>ms</span></div>
+
+<div class="slider-wrap">
+  <input type="range" id="slider" min="0" max="500" value="0" step="1">
+</div>
+
+<div class="presets">
+  <button class="preset-btn" data-ms="50">50 ms</button>
+  <button class="preset-btn" data-ms="100">100 ms</button>
+  <button class="preset-btn" data-ms="200">200 ms</button>
+  <button class="preset-btn" data-ms="300">300 ms</button>
+</div>
+
+<div class="status" id="status">STARTを押してマイクを起動してください。</div>
+
+<script>
+(function () {
+  var ctx, source, delayNode, gainNode, stream, silentNode;
+  var running = false;
+  var currentDelay = 0;
+
+  var toggleBtn = document.getElementById('toggleBtn');
+  var slider    = document.getElementById('slider');
+  var display   = document.getElementById('delayDisplay');
+  var statusEl  = document.getElementById('status');
+  var presets   = document.querySelectorAll('.preset-btn');
+
+  /* ── Delay ── */
+  function setDelay(ms) {
+    ms = Math.max(0, Math.min(500, parseInt(ms, 10)));
+    currentDelay = ms;
+    display.innerHTML = ms + '<span>ms</span>';
+    slider.value = ms;
+    presets.forEach(function (b) {
+      b.classList.toggle('selected', parseInt(b.dataset.ms, 10) === ms);
+    });
+    if (delayNode) delayNode.delayTime.value = ms / 1000;
+  }
+
+  slider.addEventListener('input', function () { setDelay(this.value); });
+
+  presets.forEach(function (b) {
+    b.addEventListener('touchend', function (e) { e.preventDefault(); setDelay(this.dataset.ms); });
+    b.addEventListener('click',    function ()  { setDelay(this.dataset.ms); });
+  });
+
+  /* ── Toggle ── */
+  function handleToggle() {
+    if (!running) { startDAF(); } else { stopDAF(); }
+  }
+
+  toggleBtn.addEventListener('touchend', function (e) { e.preventDefault(); handleToggle(); });
+  toggleBtn.addEventListener('click', handleToggle);
+
+  /* ── Start ── */
+  function startDAF() {
+    setStatus('マイクへのアクセスを要求中…');
+
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false
+    }).then(function (s) {
+      stream = s;
+
+      // AudioContextはgetUserMedia解決後に生成（iOS必須）
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
+
+      // 無音バッファを再生してiOSのオーディオセッションを
+      // "playback"カテゴリに切り替え → Bluetooth出力が有効になる
+      var silentBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      silentNode = ctx.createBufferSource();
+      silentNode.buffer = silentBuf;
+      silentNode.loop = true;
+      silentNode.connect(ctx.destination);
+      silentNode.start();
+
+      // マイク → ディレイ → ゲイン → スピーカー
+      source    = ctx.createMediaStreamSource(stream);
+      delayNode = ctx.createDelay(1.0);
+      gainNode  = ctx.createGain();
+      delayNode.delayTime.value = currentDelay / 1000;
+      gainNode.gain.value = 1.0;
+
+      source.connect(delayNode);
+      delayNode.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      running = true;
+      toggleBtn.textContent = 'STOP';
+      toggleBtn.classList.add('active');
+      setStatus('動作中 — マイクに向かって話してください。');
+
+    }).catch(function (err) {
+      var msg = err.name === 'NotAllowedError'
+        ? 'マイクのアクセスが拒否されました。Safariの設定を確認してください。'
+        : 'マイクを起動できませんでした: ' + err.message;
+      setStatus(msg);
+    });
+  }
+
+  /* ── Stop ── */
+  function stopDAF() {
+    try { if (silentNode) silentNode.stop(); } catch(e) {}
+    silentNode = null;
+    if (source)    { source.disconnect();    source    = null; }
+    if (delayNode) { delayNode.disconnect(); delayNode = null; }
+    if (gainNode)  { gainNode.disconnect();  gainNode  = null; }
+    if (ctx)       { ctx.close();            ctx       = null; }
+    if (stream)    { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+
+    running = false;
+    toggleBtn.textContent = 'START';
+    toggleBtn.classList.remove('active');
+    setStatus('停止しました。');
+  }
+
+  function setStatus(msg) { statusEl.textContent = msg; }
+})();
+</script>
+
+</body>
+</html>
