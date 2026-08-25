@@ -7,6 +7,9 @@ on:
       - '.github/workflows/todo-app.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -102,3 +105,16 @@ jobs:
         with:
           name: todo-ios-ui-screenshot
           path: todo-app/ios-screenshot.png
+
+      - name: Publish latest UI screenshot
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p todo-app-preview
+          cp todo-app/ios-screenshot.png todo-app-preview/ios.png
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add todo-app-preview/ios.png
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Todo iPhone UI preview"
+            git push
+          fi
