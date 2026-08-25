@@ -4,6 +4,12 @@
     "slug": "todo-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic"
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.gakkii415.todoapp"
+    },
+    "android": {
+      "package": "com.gakkii415.todoapp"
+    }
   }
 }
