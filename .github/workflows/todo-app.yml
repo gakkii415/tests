@@ -55,6 +55,7 @@ jobs:
           node-version: '22'
       - run: npm install
       - run: npx expo prebuild --platform ios --clean
+
       - name: Build iPhone Simulator app
         run: |
           WORKSPACE=$(find ios -maxdepth 1 -name '*.xcworkspace' | head -n 1)
@@ -62,12 +63,42 @@ jobs:
           xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphonesimulator \
             -derivedDataPath ios-build \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Launch app and capture UI
+        run: |
+          DEVICE_UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          for runtime, devices in data["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                      print(device["udid"])
+                      raise SystemExit
+          raise SystemExit("No available iPhone Simulator found")
+          ')
+
+          xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$DEVICE_UDID" -b
+
+          APP_PATH=$(find ios-build/Build/Products/Release-iphonesimulator -maxdepth 1 -name '*.app' | head -n 1)
+          xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
+          xcrun simctl launch "$DEVICE_UDID" com.gakkii415.todoapp
+          sleep 5
+          xcrun simctl io "$DEVICE_UDID" screenshot ios-screenshot.png
+
       - uses: actions/upload-artifact@v4
         with:
           name: todo-ios-simulator
-          path: todo-app/ios-build/Build/Products/Debug-iphonesimulator/*.app
+          path: todo-app/ios-build/Build/Products/Release-iphonesimulator/*.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: todo-ios-ui-screenshot
+          path: todo-app/ios-screenshot.png
