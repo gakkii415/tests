@@ -69,35 +69,12 @@ jobs:
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
           echo "Repository: https://github.com/$TARGET" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Bootstrap Repository Creator
+      - name: Hand off token to dedicated Repository Creator
         if: steps.request.outputs.name == 'repository-creator'
         shell: bash
         env:
           TARGET: ${{ steps.create_repository.outputs.target }}
         run: |
           set -euo pipefail
-
-          # Give the dedicated repository the same long-lived credential so
-          # future repository creation no longer depends on this bootstrap repo.
           gh secret set REPOSITORY_TOKEN --repo "$TARGET" --body "$GH_TOKEN"
-
-          # Install this workflow in the dedicated Repository Creator repository.
-          WORKFLOW_CONTENT=$(base64 -w 0 .github/workflows/repository-creator.yml)
-          gh api --method PUT "repos/$TARGET/contents/.github/workflows/repository-creator.yml" \
-            -f message='Install Repository Creator workflow' \
-            -f content="$WORKFLOW_CONTENT"
-
-          README_CONTENT=$(printf '%s\n' '# Repository Creator' '' 'Dedicated entry point used by ChatGPT to create new GitHub repositories through GitHub Actions.' | base64 -w 0)
-          README_SHA=$(gh api "repos/$TARGET/contents/README.md" --jq '.sha' 2>/dev/null || true)
-          if [ -n "$README_SHA" ]; then
-            gh api --method PUT "repos/$TARGET/contents/README.md" \
-              -f message='Document Repository Creator' \
-              -f content="$README_CONTENT" \
-              -f sha="$README_SHA"
-          else
-            gh api --method PUT "repos/$TARGET/contents/README.md" \
-              -f message='Document Repository Creator' \
-              -f content="$README_CONTENT"
-          fi
-
-          echo "Repository Creator bootstrapped: https://github.com/$TARGET" >> "$GITHUB_STEP_SUMMARY"
+          echo "REPOSITORY_TOKEN handed off to https://github.com/$TARGET" >> "$GITHUB_STEP_SUMMARY"
