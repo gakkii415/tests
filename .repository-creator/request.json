@@ -1,0 +1,5 @@
+{
+  "name": "repository-creator",
+  "private": true,
+  "description": "Dedicated GitHub Actions entry point for creating repositories from ChatGPT"
+}
