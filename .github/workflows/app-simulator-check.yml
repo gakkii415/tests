@@ -1,0 +1,25 @@
+name: アプリ画面確認チェック
+
+on:
+  push:
+    paths:
+      - 'app-simulator/**'
+      - '.github/workflows/app-simulator-check.yml'
+  pull_request:
+    paths:
+      - 'app-simulator/**'
+      - '.github/workflows/app-simulator-check.yml'
+
+jobs:
+  applescript-check:
+    name: AppleScript構文チェック
+    runs-on: macos-latest
+    steps:
+      - name: コード取得
+        uses: actions/checkout@v4
+
+      - name: main.applescriptを確認
+        run: osacompile -o /tmp/app-screen-main.scpt app-simulator/main.applescript
+
+      - name: launcher.applescriptを確認
+        run: osacompile -o /tmp/app-screen-launcher.scpt app-simulator/launcher.applescript
