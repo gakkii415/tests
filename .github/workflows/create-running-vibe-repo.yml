@@ -1,0 +1,66 @@
+name: Create Run Trace repository
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'running-vibe-seed/**'
+      - '.github/workflows/create-running-vibe-repo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REPO: gakkii415/vibe-running-app
+      TARGET_NAME: vibe-running-app
+      GH_TOKEN: ${{ secrets.REPO_PAT || secrets.GH_PAT || github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create public repository if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh repo view "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "Repository already exists: $TARGET_REPO"
+          else
+            gh api --method POST /user/repos \
+              -f name="$TARGET_NAME" \
+              -F private=false \
+              -f description='GPS route and elevation web app built as a vibe-coding exercise'
+          fi
+
+      - name: Enable GitHub Pages workflow mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh api "repos/$TARGET_REPO/pages" >/dev/null 2>&1; then
+            echo "Pages already configured"
+          else
+            gh api --method POST "repos/$TARGET_REPO/pages" -f build_type=workflow
+          fi
+
+      - name: Push Run Trace app
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/run-trace-target
+          mkdir -p /tmp/run-trace-target
+          cp -R running-vibe-seed/. /tmp/run-trace-target/
+          cd /tmp/run-trace-target
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Initial Run Trace web app"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+          git push --force --set-upstream origin main
+
+      - name: Summary
+        run: |
+          echo "Repository: https://github.com/$TARGET_REPO" >> "$GITHUB_STEP_SUMMARY"
+          echo "App: https://gakkii415.github.io/vibe-running-app/" >> "$GITHUB_STEP_SUMMARY"
