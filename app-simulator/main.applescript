@@ -1,9 +1,8 @@
--- アプリ画面確認 v6
--- GitHub CLI不要版
--- GitHub APIから直接リポジトリを取得し、Expoアプリを探索します。
--- 起動中の状態を通知し、iPhone / Androidの起動失敗を明示します。
+-- アプリ画面確認 v7
+-- GitHubからExpoアプリを取得し、iPhone / Androidで確認します。
+-- TerminalとAppleScriptの環境差を吸収し、起動状態と失敗理由を明示します。
 
-property appVersion : "v6"
+property appVersion : "v7"
 property appsRoot : (POSIX path of (path to home folder)) & "Library/Application Support/アプリ画面確認/アプリ"
 property keychainService : "アプリ画面確認-GitHub"
 property keychainAccount : "github-token"
@@ -41,10 +40,9 @@ on run
 	
 	set deviceChoice to choose from list {"iPhone", "Android"} with title "アプリ画面確認" with prompt "どちらで確認しますか？" OK button name "開く" cancel button name "キャンセル"
 	if deviceChoice is false then return
-	
 	set deviceName to item 1 of deviceChoice
 	
-	display notification "1/4  GitHubの最新版を準備しています" with title "アプリ画面確認"
+	display notification "1/4 GitHubの最新版を準備しています" with title "アプリ画面確認"
 	if my prepareRepository(repoFullName, repoPath, githubToken) is false then return
 	
 	if expoSubPath is "" then
@@ -63,14 +61,9 @@ on getGitHubToken()
 	end try
 	
 	set tokenDialog to display dialog "GitHubの読み取り用トークンを入力してください。" & return & return & "入力内容はmacOSのキーチェーンに保存され、次回から入力不要です。" default answer "" with title "アプリ画面確認" buttons {"キャンセル", "保存"} default button "保存" with hidden answer
-	
 	if button returned of tokenDialog is not "保存" then return ""
 	set githubToken to text returned of tokenDialog
-	
-	if githubToken is "" then
-		display alert "トークンが空です"
-		return ""
-	end if
+	if githubToken is "" then return ""
 	
 	if my tokenWorks(githubToken) is false then
 		display alert "GitHubに接続できませんでした" message "トークンが正しいか確認してください。"
@@ -83,7 +76,6 @@ on getGitHubToken()
 		display alert "キーチェーンに保存できませんでした" message errorMessage
 		return ""
 	end try
-	
 	return githubToken
 end getGitHubToken
 
@@ -98,7 +90,6 @@ end tokenWorks
 
 on findExpoRepositories(githubToken)
 	set reposUrl to "https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner"
-	
 	try
 		set reposJson to do shell script my apiCommand(githubToken, reposUrl, "application/vnd.github+json")
 	on error errorMessage
@@ -108,19 +99,18 @@ on findExpoRepositories(githubToken)
 	
 	set repoLines to my parseRepos(reposJson)
 	if (count of repoLines) is 0 then return {}
-	
 	set results to {}
+	
 	repeat with repoLine in repoLines
 		set oldTID to AppleScript's text item delimiters
 		set AppleScript's text item delimiters to tab
 		set parts to text items of repoLine
 		set AppleScript's text item delimiters to oldTID
 		
-		if (count of parts) ≥ 3 then
+		if (count of parts) >= 3 then
 			set repoName to item 1 of parts
 			set repoFullName to item 2 of parts
 			set defaultBranch to item 3 of parts
-			
 			set expoInfo to my findExpoInRepo(githubToken, repoFullName, defaultBranch)
 			if expoInfo is not false then
 				set appName to item 1 of expoInfo
@@ -134,7 +124,6 @@ on findExpoRepositories(githubToken)
 			end if
 		end if
 	end repeat
-	
 	return results
 end findExpoRepositories
 
@@ -151,7 +140,6 @@ end parseRepos
 
 on findExpoInRepo(githubToken, repoFullName, defaultBranch)
 	set treeUrl to "https://api.github.com/repos/" & repoFullName & "/git/trees/" & defaultBranch & "?recursive=1"
-	
 	try
 		set treeJson to do shell script my apiCommand(githubToken, treeUrl, "application/vnd.github+json")
 	on error
@@ -169,7 +157,6 @@ on findExpoInRepo(githubToken, repoFullName, defaultBranch)
 			return {appName, subPath}
 		end if
 	end repeat
-	
 	return false
 end findExpoInRepo
 
@@ -204,32 +191,27 @@ end readPackageName
 
 on parentPath(filePath)
 	if filePath does not contain "/" then return ""
-	
 	set oldTID to AppleScript's text item delimiters
 	set AppleScript's text item delimiters to "/"
 	set parts to text items of filePath
 	set AppleScript's text item delimiters to oldTID
-	
-	if (count of parts) ≤ 1 then return ""
+	if (count of parts) <= 1 then return ""
 	set parentParts to items 1 thru -2 of parts
-	
 	set AppleScript's text item delimiters to "/"
 	set resultPath to parentParts as text
 	set AppleScript's text item delimiters to oldTID
-	
 	return resultPath
 end parentPath
 
 on prepareRepository(repoFullName, repoPath, githubToken)
 	set authValue to my gitBasicAuth(githubToken)
-	
 	if my folderExists(repoPath) then
 		set updateCommand to "cd " & quoted form of repoPath & " && git -c http.extraHeader=" & quoted form of ("Authorization: Basic " & authValue) & " pull --ff-only"
 		try
 			do shell script "/bin/zsh -lc " & quoted form of updateCommand
 			return true
 		on error errorMessage
-			display alert "最新版に更新できませんでした" message "ローカル側に変更がある可能性があります。" & return & return & errorMessage
+			display alert "最新版に更新できませんでした" message errorMessage
 			return false
 		end try
 	else
@@ -250,169 +232,134 @@ on gitBasicAuth(githubToken)
 end gitBasicAuth
 
 on launchExpo(appPath, deviceName, appLabel)
+	-- まずディレクトリを厳密に確認
+	if my folderExists(appPath) is false then
+		display alert "アプリの場所が見つかりません" message "使用しようとした場所:" & return & appPath
+		return
+	end if
+	if my fileExists(appPath & "/package.json") is false then
+		display alert "package.jsonが見つかりません" message "使用しようとした場所:" & return & appPath
+		return
+	end if
+	
+	-- 手動Terminalと同じNode/npm/npxを、interactive zshから解決する
+	set npxPath to my resolveCommand("npx")
+	set npmPath to my resolveCommand("npm")
+	set nodePath to my resolveCommand("node")
+	if npxPath is "" or npmPath is "" or nodePath is "" then
+		display alert "Node.jsの実行環境が見つかりません" message "Terminalでは動いていても、アプリから見つけられていない可能性があります。" & return & return & "node: " & nodePath & return & "npm: " & npmPath & return & "npx: " & npxPath
+		return
+	end if
+	
+	set runtimeBin to do shell script "/usr/bin/dirname " & quoted form of npxPath
+	set freePort to my findFreePort()
+	
+	-- 古いログを消す
 	do shell script "/bin/rm -f " & quoted form of launchLog
 	
 	if deviceName is "iPhone" then
-		display notification "2/4  iPhone Simulatorを起動しています" with title "アプリ画面確認"
-		if my prepareIOS() is false then return
+		display notification "2/4 iPhone Simulatorを起動しています" with title "アプリ画面確認"
+		try
+			do shell script "/usr/bin/open -a Simulator"
+		end try
 		set platformOption to "--ios"
 		set openingText to "Opening on iOS"
 	else
-		display notification "2/4  Android Emulatorを起動しています" with title "アプリ画面確認"
-		if my prepareAndroid() is false then return
+		display notification "2/4 Android Emulatorを準備しています" with title "アプリ画面確認"
+		my startAndroidIfNeeded()
 		set platformOption to "--android"
 		set openingText to "Opening on Android"
 	end if
 	
 	if my folderExists(appPath & "/node_modules") is false then
-		display notification "3/4  初回セットアップ中です。少し時間がかかります" with title "アプリ画面確認"
+		display notification "3/4 初回セットアップ中です" with title "アプリ画面確認"
 	else
-		display notification "3/4  Expoを起動しています" with title "アプリ画面確認"
+		display notification "3/4 Expoを起動しています" with title "アプリ画面確認"
 	end if
 	
-	set envPrefix to "export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.volta/bin:$HOME/.npm-global/bin:$HOME/Library/Android/sdk/platform-tools:$HOME/Library/Android/sdk/emulator:$PATH\"; "
-	set setupCommand to envPrefix & "cd " & quoted form of appPath & " && if [ ! -d node_modules ]; then npm install; fi && exec npx expo start " & platformOption
+	set homePath to POSIX path of (path to home folder)
+	set shellPath to runtimeBin & ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" & homePath & "Library/Android/sdk/platform-tools:" & homePath & "Library/Android/sdk/emulator"
+	set envPrefix to "export PATH=" & quoted form of shellPath & "; export ANDROID_HOME=" & quoted form of (homePath & "Library/Android/sdk") & "; "
+	set setupCommand to envPrefix & "cd " & quoted form of appPath & " && if [ ! -d node_modules ]; then " & quoted form of npmPath & " install; fi && exec " & quoted form of npxPath & " expo start " & platformOption & " --port " & freePort
 	set wrappedCommand to "/bin/zsh -lc " & quoted form of setupCommand
 	
 	try
 		set expoPid to do shell script "nohup " & wrappedCommand & " > " & quoted form of launchLog & " 2>&1 & echo $!"
 	on error errorMessage
-		display alert "Expoを起動できませんでした" message errorMessage
+		display alert "Expoを起動できませんでした" message errorMessage & return & return & "使用ディレクトリ:" & return & appPath
 		return
 	end try
 	
-	if expoPid is "" then
-		display alert "Expoを起動できませんでした" message "起動処理を開始できませんでした。"
-		return
-	end if
+	display notification "4/4 接続を待っています（ポート " & freePort & "）" with title "アプリ画面確認"
 	
-	display notification "4/4  " & deviceName & "への接続を待っています" with title "アプリ画面確認"
-	
-	repeat with attempt from 1 to 18
-		delay 5
+	repeat with attempt from 1 to 16
+		delay 4
 		
 		if my logContains(openingText) then
-			display alert "起動処理は正常に進んでいます" message appLabel & " を " & deviceName & " で開いています。" & return & return & "初回はアプリが表示されるまで1〜2分かかる場合があります。"
+			display alert "正常に起動しています" message appLabel & " を " & deviceName & " で開いています。" & return & return & "使用ディレクトリ:" & return & appPath
 			return
 		end if
 		
 		if my logHasFailure() then
-			set logTail to my lastLogLines()
-			display alert "起動に失敗しました" message logTail
+			display alert "起動に失敗しました" message my diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
 			return
 		end if
 		
 		if my processIsRunning(expoPid) is false then
-			set logTail to my lastLogLines()
-			display alert "起動処理が停止しました" message logTail
+			display alert "起動処理が停止しました" message my diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
 			return
 		end if
 		
-		if attempt is 3 then
-			display notification "まだ処理中です。正常に待機しています" with title "アプリ画面確認"
-		else if attempt is 6 then
-			display notification "まだ処理中です。初回起動は時間がかかる場合があります" with title "アプリ画面確認"
-		else if attempt is 12 then
-			display notification "Expoは動作中です。引き続き接続を待っています" with title "アプリ画面確認"
+		if attempt is 4 then
+			display notification "まだ正常に処理中です" with title "アプリ画面確認"
+		else if attempt is 8 then
+			display notification "Expoは動作中です。端末起動を待っています" with title "アプリ画面確認"
 		end if
 	end repeat
 	
 	if my processIsRunning(expoPid) then
-		display alert "処理は継続中です" message "Expoは停止していませんが、90秒以内に端末への接続完了を確認できませんでした。" & return & return & deviceName & "の画面を確認してください。"
+		display alert "Expoは動作中です" message "端末を開く処理に時間がかかっています。" & return & return & "使用ディレクトリ:" & return & appPath & return & "ポート: " & freePort & return & return & my lastLogLines()
 	else
-		display alert "起動処理が停止しました" message my lastLogLines()
+		display alert "起動処理が停止しました" message my diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
 	end if
 end launchExpo
 
-on prepareIOS()
+on resolveCommand(commandName)
 	try
-		do shell script "/usr/bin/open -a Simulator"
-	on error errorMessage
-		display alert "iPhone Simulatorを起動できませんでした" message errorMessage
-		return false
-	end try
-	
-	repeat with attempt from 1 to 12
-		delay 3
-		try
-			do shell script "/usr/bin/xcrun simctl list devices booted | /usr/bin/grep -q '(Booted)'"
-			return true
-		end try
-		if attempt is 5 then display notification "iPhone Simulatorの起動を待っています" with title "アプリ画面確認"
-	end repeat
-	
-	display alert "iPhone Simulatorの起動に時間がかかっています" message "Simulatorは開きましたが、起動完了を確認できませんでした。Simulatorの画面を確認してください。"
-	return false
-end prepareIOS
-
-on prepareAndroid()
-	set emulatorPath to my findAndroidTool("emulator")
-	set adbPath to my findAndroidTool("adb")
-	
-	if emulatorPath is "" or adbPath is "" then
-		display alert "Android Emulatorを起動できませんでした" message "Android SDKの emulator または adb が見つかりません。Android Studioの設定を確認してください。"
-		return false
-	end if
-	
-	set runningDevice to false
-	try
-		do shell script quoted form of adbPath & " devices | /usr/bin/grep -q '^emulator-'"
-		set runningDevice to true
-	end try
-	
-	if runningDevice is false then
-		try
-			set avdName to do shell script quoted form of emulatorPath & " -list-avds | /usr/bin/head -n 1"
-		on error
-			set avdName to ""
-		end try
-		
-		if avdName is "" then
-			display alert "Android端末が見つかりません" message "Android StudioのDevice Managerで仮想端末を1つ作成してください。"
-			return false
-		end if
-		
-		try
-			do shell script "nohup " & quoted form of emulatorPath & " -avd " & quoted form of avdName & " > /tmp/app-screen-check-android.log 2>&1 &"
-		on error errorMessage
-			display alert "Android Emulatorを起動できませんでした" message errorMessage
-			return false
-		end try
-	end if
-	
-	repeat with attempt from 1 to 30
-		delay 3
-		try
-			set bootState to do shell script quoted form of adbPath & " shell getprop sys.boot_completed 2>/dev/null | /usr/bin/tr -d '\\r'"
-			if bootState is "1" then return true
-		end try
-		
-		if attempt is 5 then
-			display notification "Android Emulatorの起動を待っています" with title "アプリ画面確認"
-		else if attempt is 15 then
-			display notification "Androidはまだ起動中です" with title "アプリ画面確認"
-		end if
-	end repeat
-	
-	display alert "Android Emulatorの起動に時間がかかっています" message "90秒以内にAndroidの起動完了を確認できませんでした。Emulatorの画面を確認してください。"
-	return false
-end prepareAndroid
-
-on findAndroidTool(toolName)
-	set candidates to {(POSIX path of (path to home folder)) & "Library/Android/sdk/platform-tools/" & toolName, (POSIX path of (path to home folder)) & "Library/Android/sdk/emulator/" & toolName}
-	repeat with candidatePath in candidates
-		try
-			do shell script "test -x " & quoted form of candidatePath
-			return candidatePath
-		end try
-	end repeat
-	
-	try
-		return do shell script "/bin/zsh -lc " & quoted form of ("command -v " & toolName)
+		set cmd to "command -v " & commandName & " 2>/dev/null"
+		return do shell script "/bin/zsh -ic " & quoted form of cmd
 	on error
 		return ""
 	end try
-end findAndroidTool
+end resolveCommand
+
+on findFreePort()
+	try
+		set cmd to "for p in {8081..8090}; do if ! /usr/sbin/lsof -iTCP:$p -sTCP:LISTEN -t >/dev/null 2>&1; then echo $p; break; fi; done"
+		set foundPort to do shell script "/bin/zsh -lc " & quoted form of cmd
+		if foundPort is not "" then return foundPort
+	end try
+	return "8081"
+end findFreePort
+
+on startAndroidIfNeeded()
+	set adbPath to (POSIX path of (path to home folder)) & "Library/Android/sdk/platform-tools/adb"
+	set emulatorPath to (POSIX path of (path to home folder)) & "Library/Android/sdk/emulator/emulator"
+	try
+		do shell script quoted form of adbPath & " devices | /usr/bin/grep -q '^emulator-'"
+		return
+	end try
+	try
+		set avdName to do shell script quoted form of emulatorPath & " -list-avds | /usr/bin/head -n 1"
+		if avdName is not "" then
+			do shell script "nohup " & quoted form of emulatorPath & " -avd " & quoted form of avdName & " > /tmp/app-screen-check-android.log 2>&1 &"
+		end if
+	end try
+end startAndroidIfNeeded
+
+on diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
+	return "使用ディレクトリ:" & return & appPath & return & return & "node: " & nodePath & return & "npm: " & npmPath & return & "npx: " & npxPath & return & "ポート: " & freePort & return & return & "直近のログ:" & return & my lastLogLines()
+end diagnosticMessage
 
 on processIsRunning(processId)
 	try
@@ -434,7 +381,7 @@ end logContains
 
 on logHasFailure()
 	try
-		do shell script "/usr/bin/grep -Eiq 'CommandError:|npm ERR!|Error: Cannot|Unable to|No Android connected device|No development build' " & quoted form of launchLog
+		do shell script "/usr/bin/grep -Eiq 'CommandError:|npm ERR!|command not found|EADDRINUSE|Unable to|No Android connected device|xcrun: error|Error:' " & quoted form of launchLog
 		return true
 	on error
 		return false
@@ -443,11 +390,11 @@ end logHasFailure
 
 on lastLogLines()
 	try
-		set logText to do shell script "/usr/bin/tail -n 12 " & quoted form of launchLog
-		if logText is "" then return "詳しいエラー情報を取得できませんでした。"
+		set logText to do shell script "/usr/bin/tail -n 14 " & quoted form of launchLog
+		if logText is "" then return "ログはまだありません。"
 		return logText
 	on error
-		return "詳しいエラー情報を取得できませんでした。"
+		return "ログを取得できませんでした。"
 	end try
 end lastLogLines
 
@@ -463,6 +410,15 @@ on folderExists(folderPath)
 		return false
 	end try
 end folderExists
+
+on fileExists(filePath)
+	try
+		do shell script "test -f " & quoted form of filePath
+		return true
+	on error
+		return false
+	end try
+end fileExists
 
 on ensureFolder(folderPath)
 	do shell script "mkdir -p " & quoted form of folderPath
