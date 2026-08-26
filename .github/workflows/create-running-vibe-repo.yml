@@ -1,10 +1,10 @@
-name: Create Run Trace repository
+name: ランニングアプリ用リポジトリ作成
 
 on:
   push:
     branches: [main]
     paths:
-      - 'running-vibe-seed/**'
+      - 'running-vibe/**'
       - '.github/workflows/create-running-vibe-repo.yml'
   workflow_dispatch:
 
@@ -15,52 +15,56 @@ jobs:
   create:
     runs-on: ubuntu-latest
     env:
-      TARGET_REPO: gakkii415/vibe-running-app
-      TARGET_NAME: vibe-running-app
-      GH_TOKEN: ${{ secrets.REPO_PAT || secrets.GH_PAT || github.token }}
+      TARGET_REPO: gakkii415/running-app
+      TARGET_NAME: running-app
+      GH_TOKEN: ${{ secrets.REPOSITORY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create public repository if needed
+      - name: 専用リポジトリを作成
         shell: bash
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "REPOSITORY_TOKEN が設定されていません"
+            exit 1
+          fi
           if gh repo view "$TARGET_REPO" >/dev/null 2>&1; then
             echo "Repository already exists: $TARGET_REPO"
           else
             gh api --method POST /user/repos \
               -f name="$TARGET_NAME" \
               -F private=false \
-              -f description='GPS route and elevation web app built as a vibe-coding exercise'
+              -f description='iPhone GPSを使ったランニング経路・距離・標高のWebアプリ'
           fi
 
-      - name: Enable GitHub Pages workflow mode
+      - name: アプリを専用リポジトリへ反映
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/running-app
+          mkdir -p /tmp/running-app
+          cp running-vibe/index.html /tmp/running-app/index.html
+          cd /tmp/running-app
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "ランニングアプリ初期版"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+          git push --force --set-upstream origin main
+
+      - name: GitHub Pagesを有効化
         shell: bash
         run: |
           set -euo pipefail
           if gh api "repos/$TARGET_REPO/pages" >/dev/null 2>&1; then
-            echo "Pages already configured"
+            gh api --method PUT "repos/$TARGET_REPO/pages" -f source[branch]=main -f source[path]=/
           else
-            gh api --method POST "repos/$TARGET_REPO/pages" -f build_type=workflow
+            gh api --method POST "repos/$TARGET_REPO/pages" -f source[branch]=main -f source[path]=/
           fi
 
-      - name: Push Run Trace app
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/run-trace-target
-          mkdir -p /tmp/run-trace-target
-          cp -R running-vibe-seed/. /tmp/run-trace-target/
-          cd /tmp/run-trace-target
-          git init -b main
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Initial Run Trace web app"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
-          git push --force --set-upstream origin main
-
-      - name: Summary
+      - name: 結果
         run: |
           echo "Repository: https://github.com/$TARGET_REPO" >> "$GITHUB_STEP_SUMMARY"
-          echo "App: https://gakkii415.github.io/vibe-running-app/" >> "$GITHUB_STEP_SUMMARY"
+          echo "App: https://gakkii415.github.io/running-app/" >> "$GITHUB_STEP_SUMMARY"
