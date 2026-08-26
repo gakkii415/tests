@@ -1,0 +1,103 @@
+name: Repository Creator
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.repository-creator/request.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.REPOSITORY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "REPOSITORY_TOKEN secret is required." >&2
+            exit 1
+          fi
+
+      - name: Read request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME=$(jq -r '.name' .repository-creator/request.json)
+          PRIVATE=$(jq -r '.private // false' .repository-creator/request.json)
+          DESCRIPTION=$(jq -r '.description // ""' .repository-creator/request.json)
+
+          if [[ ! "$NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid repository name: $NAME" >&2
+            exit 1
+          fi
+
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "private=$PRIVATE" >> "$GITHUB_OUTPUT"
+          echo "description=$DESCRIPTION" >> "$GITHUB_OUTPUT"
+
+      - name: Create repository if needed
+        id: create_repository
+        shell: bash
+        env:
+          NAME: ${{ steps.request.outputs.name }}
+          PRIVATE: ${{ steps.request.outputs.private }}
+          DESCRIPTION: ${{ steps.request.outputs.description }}
+        run: |
+          set -euo pipefail
+          TARGET="gakkii415/$NAME"
+
+          if gh repo view "$TARGET" >/dev/null 2>&1; then
+            echo "Repository already exists: $TARGET"
+          else
+            gh api --method POST /user/repos \
+              -f name="$NAME" \
+              -F private="$PRIVATE" \
+              -F auto_init=true \
+              -f description="$DESCRIPTION"
+          fi
+
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "Repository: https://github.com/$TARGET" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bootstrap Repository Creator
+        if: steps.request.outputs.name == 'repository-creator'
+        shell: bash
+        env:
+          TARGET: ${{ steps.create_repository.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          # Give the dedicated repository the same long-lived credential so
+          # future repository creation no longer depends on this bootstrap repo.
+          gh secret set REPOSITORY_TOKEN --repo "$TARGET" --body "$GH_TOKEN"
+
+          # Install this workflow in the dedicated Repository Creator repository.
+          WORKFLOW_CONTENT=$(base64 -w 0 .github/workflows/repository-creator.yml)
+          gh api --method PUT "repos/$TARGET/contents/.github/workflows/repository-creator.yml" \
+            -f message='Install Repository Creator workflow' \
+            -f content="$WORKFLOW_CONTENT"
+
+          README_CONTENT=$(printf '%s\n' '# Repository Creator' '' 'Dedicated entry point used by ChatGPT to create new GitHub repositories through GitHub Actions.' | base64 -w 0)
+          README_SHA=$(gh api "repos/$TARGET/contents/README.md" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$README_SHA" ]; then
+            gh api --method PUT "repos/$TARGET/contents/README.md" \
+              -f message='Document Repository Creator' \
+              -f content="$README_CONTENT" \
+              -f sha="$README_SHA"
+          else
+            gh api --method PUT "repos/$TARGET/contents/README.md" \
+              -f message='Document Repository Creator' \
+              -f content="$README_CONTENT"
+          fi
+
+          echo "Repository Creator bootstrapped: https://github.com/$TARGET" >> "$GITHUB_STEP_SUMMARY"
