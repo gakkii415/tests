@@ -1,8 +1,8 @@
--- アプリ画面確認 v7
--- GitHubからExpoアプリを取得し、iPhone / Androidで確認します。
--- TerminalとAppleScriptの環境差を吸収し、起動状態と失敗理由を明示します。
+-- アプリ画面確認 v8
+-- GitHub上のExpoアプリを取得し、iPhone / Androidで確認します。
+-- TerminalとMacアプリのNode環境差を吸収します。
 
-property appVersion : "v7"
+property appVersion : "v8"
 property appsRoot : (POSIX path of (path to home folder)) & "Library/Application Support/アプリ画面確認/アプリ"
 property keychainService : "アプリ画面確認-GitHub"
 property keychainAccount : "github-token"
@@ -32,7 +32,6 @@ on run
 	set selectedLabel to item 1 of selectedApp
 	set selectedIndex to my indexOf(selectedLabel, appLabels)
 	set selectedRecord to item selectedIndex of appRecords
-	
 	set repoName to item 2 of selectedRecord
 	set repoFullName to item 3 of selectedRecord
 	set expoSubPath to item 4 of selectedRecord
@@ -232,7 +231,6 @@ on gitBasicAuth(githubToken)
 end gitBasicAuth
 
 on launchExpo(appPath, deviceName, appLabel)
-	-- まずディレクトリを厳密に確認
 	if my folderExists(appPath) is false then
 		display alert "アプリの場所が見つかりません" message "使用しようとした場所:" & return & appPath
 		return
@@ -242,19 +240,23 @@ on launchExpo(appPath, deviceName, appLabel)
 		return
 	end if
 	
-	-- 手動Terminalと同じNode/npm/npxを、interactive zshから解決する
-	set npxPath to my resolveCommand("npx")
-	set npmPath to my resolveCommand("npm")
-	set nodePath to my resolveCommand("node")
-	if npxPath is "" or npmPath is "" or nodePath is "" then
-		display alert "Node.jsの実行環境が見つかりません" message "Terminalでは動いていても、アプリから見つけられていない可能性があります。" & return & return & "node: " & nodePath & return & "npm: " & npmPath & return & "npx: " & npxPath
+	set nodePath to my findNode()
+	if nodePath is "" then
+		display alert "Node.jsの実行環境が見つかりません" message "TerminalではNode.jsが使えていますが、Macアプリ側から場所を特定できませんでした。" & return & return & "確認したアプリの場所:" & return & appPath
 		return
 	end if
 	
-	set runtimeBin to do shell script "/usr/bin/dirname " & quoted form of npxPath
-	set freePort to my findFreePort()
+	set nodeBin to do shell script "/usr/bin/dirname " & quoted form of nodePath
+	set npmPath to nodeBin & "/npm"
+	if my fileExists(npmPath) is false then
+		set npmPath to my resolveLoginCommand("npm")
+	end if
+	if npmPath is "" or my fileExists(npmPath) is false then
+		display alert "npmが見つかりません" message "Node.jsは見つかりましたが、npmを見つけられませんでした。" & return & return & "Node.js:" & return & nodePath
+		return
+	end if
 	
-	-- 古いログを消す
+	set freePort to my findFreePort()
 	do shell script "/bin/rm -f " & quoted form of launchLog
 	
 	if deviceName is "iPhone" then
@@ -271,67 +273,97 @@ on launchExpo(appPath, deviceName, appLabel)
 		set openingText to "Opening on Android"
 	end if
 	
+	set homePath to POSIX path of (path to home folder)
+	set shellPath to nodeBin & ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" & homePath & "Library/Android/sdk/platform-tools:" & homePath & "Library/Android/sdk/emulator"
+	set envPrefix to "export PATH=" & quoted form of shellPath & "; export ANDROID_HOME=" & quoted form of (homePath & "Library/Android/sdk") & "; "
+	
 	if my folderExists(appPath & "/node_modules") is false then
-		display notification "3/4 初回セットアップ中です" with title "アプリ画面確認"
+		display notification "3/4 初回セットアップ中です。少し時間がかかります" with title "アプリ画面確認"
+		try
+			do shell script "/bin/zsh -lc " & quoted form of (envPrefix & "cd " & quoted form of appPath & " && " & quoted form of npmPath & " install")
+		on error errorMessage
+			display alert "初回セットアップに失敗しました" message errorMessage & return & return & "使用ディレクトリ:" & return & appPath & return & "Node.js:" & return & nodePath & return & "npm:" & return & npmPath
+			return
+		end try
 	else
 		display notification "3/4 Expoを起動しています" with title "アプリ画面確認"
 	end if
 	
-	set homePath to POSIX path of (path to home folder)
-	set shellPath to runtimeBin & ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" & homePath & "Library/Android/sdk/platform-tools:" & homePath & "Library/Android/sdk/emulator"
-	set envPrefix to "export PATH=" & quoted form of shellPath & "; export ANDROID_HOME=" & quoted form of (homePath & "Library/Android/sdk") & "; "
-	set setupCommand to envPrefix & "cd " & quoted form of appPath & " && if [ ! -d node_modules ]; then " & quoted form of npmPath & " install; fi && exec " & quoted form of npxPath & " expo start " & platformOption & " --port " & freePort
+	set expoPath to appPath & "/node_modules/.bin/expo"
+	if my fileExists(expoPath) is false then
+		display alert "Expoが見つかりません" message "依存関係の準備後もExpoの実行ファイルが見つかりませんでした。" & return & return & "使用ディレクトリ:" & return & appPath
+		return
+	end if
+	
+	set setupCommand to envPrefix & "cd " & quoted form of appPath & " && exec " & quoted form of expoPath & " start " & platformOption & " --port " & freePort
 	set wrappedCommand to "/bin/zsh -lc " & quoted form of setupCommand
 	
 	try
 		set expoPid to do shell script "nohup " & wrappedCommand & " > " & quoted form of launchLog & " 2>&1 & echo $!"
 	on error errorMessage
-		display alert "Expoを起動できませんでした" message errorMessage & return & return & "使用ディレクトリ:" & return & appPath
+		display alert "Expoを起動できませんでした" message errorMessage & return & return & my diagnosticMessage(appPath, nodePath, npmPath, freePort)
 		return
 	end try
 	
-	display notification "4/4 接続を待っています（ポート " & freePort & "）" with title "アプリ画面確認"
+	display notification "4/4 " & deviceName & "への接続を待っています（ポート " & freePort & "）" with title "アプリ画面確認"
 	
-	repeat with attempt from 1 to 16
+	repeat with attempt from 1 to 20
 		delay 4
-		
 		if my logContains(openingText) then
 			display alert "正常に起動しています" message appLabel & " を " & deviceName & " で開いています。" & return & return & "使用ディレクトリ:" & return & appPath
 			return
 		end if
-		
 		if my logHasFailure() then
-			display alert "起動に失敗しました" message my diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
+			display alert "起動に失敗しました" message my diagnosticMessage(appPath, nodePath, npmPath, freePort)
 			return
 		end if
-		
 		if my processIsRunning(expoPid) is false then
-			display alert "起動処理が停止しました" message my diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
+			display alert "起動処理が停止しました" message my diagnosticMessage(appPath, nodePath, npmPath, freePort)
 			return
 		end if
-		
 		if attempt is 4 then
 			display notification "まだ正常に処理中です" with title "アプリ画面確認"
 		else if attempt is 8 then
-			display notification "Expoは動作中です。端末起動を待っています" with title "アプリ画面確認"
+			display notification "Expoは動作中です。端末への接続を待っています" with title "アプリ画面確認"
+		else if attempt is 15 then
+			display notification "まだ接続待ちです。処理は停止していません" with title "アプリ画面確認"
 		end if
 	end repeat
 	
 	if my processIsRunning(expoPid) then
-		display alert "Expoは動作中です" message "端末を開く処理に時間がかかっています。" & return & return & "使用ディレクトリ:" & return & appPath & return & "ポート: " & freePort & return & return & my lastLogLines()
+		display alert "Expoは動作中です" message "80秒以内に端末への接続完了を確認できませんでした。" & return & return & my diagnosticMessage(appPath, nodePath, npmPath, freePort)
 	else
-		display alert "起動処理が停止しました" message my diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
+		display alert "起動処理が停止しました" message my diagnosticMessage(appPath, nodePath, npmPath, freePort)
 	end if
 end launchExpo
 
-on resolveCommand(commandName)
+on findNode()
+	set loginNode to my resolveLoginCommand("node")
+	if loginNode is not "" and my fileExists(loginNode) then return loginNode
+	
+	set homePath to POSIX path of (path to home folder)
+	set candidates to {homePath & ".volta/bin/node", "/opt/homebrew/bin/node", "/usr/local/bin/node"}
+	repeat with candidatePath in candidates
+		if my fileExists(candidatePath) then return candidatePath
+	end repeat
+	
+	try
+		set foundNode to do shell script "/bin/zsh -lc " & quoted form of ("for f in $HOME/.nvm/versions/node/*/bin/node $HOME/.fnm/node-versions/*/installation/bin/node; do [ -x \"$f\" ] && echo \"$f\"; done | tail -n 1")
+		if foundNode is not "" then return foundNode
+	end try
+	return ""
+end findNode
+
+on resolveLoginCommand(commandName)
 	try
 		set cmd to "command -v " & commandName & " 2>/dev/null"
-		return do shell script "/bin/zsh -ic " & quoted form of cmd
+		set resultPath to do shell script "/bin/zsh -lic " & quoted form of cmd
+		if resultPath contains return then set resultPath to paragraph -1 of resultPath
+		return resultPath
 	on error
 		return ""
 	end try
-end resolveCommand
+end resolveLoginCommand
 
 on findFreePort()
 	try
@@ -343,8 +375,9 @@ on findFreePort()
 end findFreePort
 
 on startAndroidIfNeeded()
-	set adbPath to (POSIX path of (path to home folder)) & "Library/Android/sdk/platform-tools/adb"
-	set emulatorPath to (POSIX path of (path to home folder)) & "Library/Android/sdk/emulator/emulator"
+	set homePath to POSIX path of (path to home folder)
+	set adbPath to homePath & "Library/Android/sdk/platform-tools/adb"
+	set emulatorPath to homePath & "Library/Android/sdk/emulator/emulator"
 	try
 		do shell script quoted form of adbPath & " devices | /usr/bin/grep -q '^emulator-'"
 		return
@@ -357,8 +390,8 @@ on startAndroidIfNeeded()
 	end try
 end startAndroidIfNeeded
 
-on diagnosticMessage(appPath, nodePath, npmPath, npxPath, freePort)
-	return "使用ディレクトリ:" & return & appPath & return & return & "node: " & nodePath & return & "npm: " & npmPath & return & "npx: " & npxPath & return & "ポート: " & freePort & return & return & "直近のログ:" & return & my lastLogLines()
+on diagnosticMessage(appPath, nodePath, npmPath, freePort)
+	return "使用ディレクトリ:" & return & appPath & return & return & "Node.js:" & return & nodePath & return & "npm:" & return & npmPath & return & "ポート: " & freePort & return & return & "直近のログ:" & return & my lastLogLines()
 end diagnosticMessage
 
 on processIsRunning(processId)
