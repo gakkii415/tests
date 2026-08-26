@@ -43,7 +43,7 @@
     <span id="status-text">「記録開始」を押すと、iPhoneの位置情報の許可を求めます。</span>
   </section>
 
-  <p class="note">記録中はGPSを受信するたびに、現在地・走行ルート・距離・標高グラフをリアルタイム更新します。GPSはHTTPS上でのみ利用できます。iPhoneのSafariでは、画面ロックやバックグラウンド移行により記録が止まる場合があります。</p>
+  <p class="note">走行線はGPSの生座標をそのまま使わず、精度判定・異常ジャンプ除外・位置フィルタ・微小ブレ除去を通した補正後の位置をリアルタイム描画します。標高も異常値を除外して平滑化します。</p>
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -55,13 +55,18 @@
   const modeEl=$('mode'), ascentEl=$('ascent'), statusTitle=$('status-title'), statusText=$('status-text');
   const canvas=$('elevation'), ctx=canvas.getContext('2d');
 
+  const GPS={startMaxAccuracy:35,maxAccuracy:55,maxRunSpeed:8.5,hardJumpMeters:30,warmupCount:3};
   const map=L.map('map',{zoomControl:true}).setView([36.2048,138.2529],5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-  let line=L.polyline([],{color:'#111827',weight:5,opacity:.88,lineJoin:'round',lineCap:'round'}).addTo(map);
+  let line=L.polyline([],{color:'#111827',weight:5,opacity:.88,lineJoin:'round',lineCap:'round',smoothFactor:1.35}).addTo(map);
   let currentMarker=null,startMarker=null;
 
   let points=[],watchId=null,timerId=null,startAt=null,elapsedMs=0,totalMeters=0,totalAscent=0,isRunning=false,demoTimer=null;
+  let warmup=[],origin=null,kx=null,ky=null,filterT=null,rejectedFixes=0,lastRenderedT=null;
+  let altitudeState=null,lastGoodRawAlt=null,ascentBaseAlt=null;
 
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+  function median(values){const a=values.filter(Number.isFinite).slice().sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
   function setStatus(title,text){statusTitle.textContent=title;statusText.textContent=text}
   function fmtTime(ms){const s=Math.floor(ms/1000),m=Math.floor(s/60),r=s%60,h=Math.floor(m/60);return h?`${String(h).padStart(2,'0')}:${String(m%60).padStart(2,'0')}:${String(r).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`}
   function hav(a,b){const R=6371000,toRad=x=>x*Math.PI/180;const dLat=toRad(b.lat-a.lat),dLon=toRad(b.lng-a.lng);const q=Math.sin(dLat/2)**2+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}
@@ -69,84 +74,144 @@
   function drawElevation(){const w=canvas.clientWidth,h=150;ctx.clearRect(0,0,w,h);ctx.strokeStyle='#e5e7eb';ctx.lineWidth=1;for(let i=1;i<4;i++){const y=(h-22)*i/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}const valid=points.filter(p=>Number.isFinite(p.alt));if(valid.length<2){ctx.fillStyle='#6b7280';ctx.font='13px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText('標高データが入るとここにグラフを表示します',10,78);return}let min=Math.min(...valid.map(p=>p.alt)),max=Math.max(...valid.map(p=>p.alt));if(max-min<4){max+=2;min-=2}const maxD=Math.max(valid.at(-1).dist,1);ctx.strokeStyle='#4b5563';ctx.lineWidth=2;ctx.beginPath();valid.forEach((p,i)=>{const x=10+(w-20)*(p.dist/maxD),y=8+(h-28)*(1-(p.alt-min)/(max-min));i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.fillStyle='#6b7280';ctx.font='11px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`${Math.round(max)} m`,10,12);ctx.fillText(`${Math.round(min)} m`,10,h-5)}
   function updateMetrics(){distanceEl.textContent=(totalMeters/1000).toFixed(2);timeEl.textContent=fmtTime(elapsedMs+(isRunning&&startAt?Date.now()-startAt:0));ascentEl.textContent=`累積上昇 ${Math.round(totalAscent)} m`;drawElevation()}
 
-  function appendPoint(p,follow=true){
-    const prev=points.at(-1);
-    let seg=prev?hav(prev,p):0;
-    if(prev && seg>250){
-      setStatus('GPSの大きな飛びを除外しました',`前の地点から ${Math.round(seg)} m 離れた測位だったため距離には加算していません。`);
-      seg=0;
-    }
-    if(prev && Number.isFinite(prev.alt)&&Number.isFinite(p.alt)){
-      const gain=p.alt-prev.alt;
-      if(gain>1.5&&gain<30) totalAscent+=gain;
-    }
-    totalMeters+=seg;
-    p.dist=totalMeters;
-    points.push(p);
+  function newKalman(position,positionVariance){return{p:position,v:0,p00:positionVariance,p01:0,p10:0,p11:16}}
+  function kalmanStep(k,z,dt,measurementVariance,accelSigma){
+    const q=accelSigma*accelSigma,dt2=dt*dt,dt3=dt2*dt,dt4=dt2*dt2;
+    let p=k.p+k.v*dt,v=k.v;
+    let p00=k.p00+dt*(k.p01+k.p10)+dt2*k.p11+.25*dt4*q;
+    let p01=k.p01+dt*k.p11+.5*dt3*q;
+    let p10=k.p10+dt*k.p11+.5*dt3*q;
+    let p11=k.p11+dt2*q;
+    const s=p00+measurementVariance,k0=p00/s,k1=p10/s,innovation=z-p;
+    k.p=p+k0*innovation;k.v=v+k1*innovation;
+    const n00=(1-k0)*p00,n01=(1-k0)*p01,n10=p10-k1*p00,n11=p11-k1*p01,sym=(n01+n10)/2;
+    k.p00=Math.max(n00,.01);k.p01=sym;k.p10=sym;k.p11=Math.max(n11,.01);
+  }
+  function localMeters(lat,lng){const y=(lat-origin.lat)*111132,x=(lng-origin.lng)*111320*Math.cos(origin.lat*Math.PI/180);return{x,y}}
+  function localLatLng(x,y){return{lat:origin.lat+y/111132,lng:origin.lng+x/(111320*Math.cos(origin.lat*Math.PI/180))}}
 
-    // GPSを受信した瞬間に、その地点までルートを延長する。
-    line.addLatLng([p.lat,p.lng]);
-
-    if(!startMarker){
-      startMarker=L.circleMarker([p.lat,p.lng],{radius:6,color:'#111827',fillColor:'#fff',fillOpacity:1,weight:3}).addTo(map);
+  function filterAltitude(rawAlt,altAcc,t){
+    if(!Number.isFinite(rawAlt))return altitudeState?altitudeState.p:null;
+    if(Number.isFinite(altAcc)&&altAcc>40)return altitudeState?altitudeState.p:null;
+    if(lastGoodRawAlt){
+      const dt=Math.max((t-lastGoodRawAlt.t)/1000,.5),delta=Math.abs(rawAlt-lastGoodRawAlt.alt);
+      if(delta>12&&delta/dt>2.5)return altitudeState?altitudeState.p:null;
     }
-    if(currentMarker){
-      currentMarker.setLatLng([p.lat,p.lng]);
-    }else{
-      currentMarker=L.circleMarker([p.lat,p.lng],{radius:8,color:'#fff',fillColor:'#16a34a',fillOpacity:1,weight:3}).addTo(map);
-    }
+    lastGoodRawAlt={alt:rawAlt,t};
+    const r=Math.max(25,Math.pow(Number.isFinite(altAcc)?altAcc:12,2));
+    if(!altitudeState){altitudeState={p:rawAlt,var:r,t};return rawAlt}
+    const dt=clamp((t-altitudeState.t)/1000,.2,10);
+    altitudeState.var+=2.25*dt*dt;
+    const gain=altitudeState.var/(altitudeState.var+r);
+    altitudeState.p+=gain*(rawAlt-altitudeState.p);
+    altitudeState.var=Math.max((1-gain)*altitudeState.var,1);
+    altitudeState.t=t;
+    return altitudeState.p;
+  }
 
-    // 記録中は常に最新地点を画面中央付近へ追従。
-    if(follow){
-      if(points.length===1) map.setView([p.lat,p.lng],18);
-      else map.panTo([p.lat,p.lng],{animate:true,duration:.3,easeLinearity:.25});
-    }
+  function initializeGpsFilter(){
+    const lat=median(warmup.map(p=>p.lat)),lng=median(warmup.map(p=>p.lng)),acc=median(warmup.map(p=>p.acc));
+    const latest=warmup.at(-1),alt=median(warmup.map(p=>p.alt)),altAcc=median(warmup.map(p=>p.altAcc));
+    origin={lat,lng};
+    const posVar=Math.max(16,acc*acc);
+    kx=newKalman(0,posVar);ky=newKalman(0,posVar);filterT=latest.t;
+    const filteredAlt=filterAltitude(alt,altAcc,latest.t);
+    const p={lat,lng,alt:filteredAlt,acc,t:latest.t};
+    warmup=[];
+    return p;
+  }
 
+  function filterGps(raw){
+    if(!origin)return null;
+    const prev=points.at(-1),dt=clamp((raw.t-filterT)/1000,.2,10);
+    if(prev){
+      const rawDistance=hav(prev,raw),allowance=Math.max(GPS.hardJumpMeters,raw.acc*2+(prev.acc||0));
+      if(rawDistance>allowance&&rawDistance/dt>GPS.maxRunSpeed){rejectedFixes++;return null}
+    }
+    const local=localMeters(raw.lat,raw.lng),r=Math.max(9,raw.acc*raw.acc),accelSigma=Number.isFinite(raw.speed)&&raw.speed>2.5?3:2;
+    kalmanStep(kx,local.x,dt,r,accelSigma);kalmanStep(ky,local.y,dt,r,accelSigma);filterT=raw.t;
+    const ll=localLatLng(kx.p,ky.p);
+    return{lat:ll.lat,lng:ll.lng,alt:filterAltitude(raw.alt,raw.altAcc,raw.t),acc:raw.acc,t:raw.t};
+  }
+
+  function updateCurrentMarker(p,follow=true){
+    if(currentMarker)currentMarker.setLatLng([p.lat,p.lng]);
+    else currentMarker=L.circleMarker([p.lat,p.lng],{radius:8,color:'#fff',fillColor:'#16a34a',fillOpacity:1,weight:3}).addTo(map);
+    if(follow){if(points.length===0)map.setView([p.lat,p.lng],18);else map.panTo([p.lat,p.lng],{animate:true,duration:.25,easeLinearity:.25})}
     altitudeEl.textContent=Number.isFinite(p.alt)?Math.round(p.alt):'—';
     accuracyEl.textContent=Number.isFinite(p.acc)?Math.round(p.acc):'—';
+  }
 
-    // 距離・標高グラフも同じGPS更新で即時再描画。
+  function appendPoint(p,follow=true){
+    const prev=points.at(-1),seg=prev?hav(prev,p):0;
+    totalMeters+=seg;p.dist=totalMeters;points.push(p);lastRenderedT=p.t;
+
+    if(Number.isFinite(p.alt)){
+      if(ascentBaseAlt===null)ascentBaseAlt=p.alt;
+      if(p.alt<ascentBaseAlt)ascentBaseAlt=p.alt;
+      else if(p.alt-ascentBaseAlt>=3){totalAscent+=p.alt-ascentBaseAlt;ascentBaseAlt=p.alt}
+    }
+
+    line.addLatLng([p.lat,p.lng]);
+    if(!startMarker)startMarker=L.circleMarker([p.lat,p.lng],{radius:6,color:'#111827',fillColor:'#fff',fillOpacity:1,weight:3}).addTo(map);
+    updateCurrentMarker(p,follow);
     requestAnimationFrame(updateMetrics);
+  }
+
+  function handleGpsPosition(pos){
+    const c=pos.coords,acc=Number.isFinite(c.accuracy)?c.accuracy:999;
+    accuracyEl.textContent=Math.round(acc);
+    const raw={lat:c.latitude,lng:c.longitude,alt:c.altitude,altAcc:c.altitudeAccuracy,acc,t:pos.timestamp,speed:c.speed};
+
+    if(!origin){
+      if(acc>GPS.startMaxAccuracy){setStatus('GPSを安定させています',`開始位置の精度が約 ${Math.round(acc)} m。35 m以内になるまで待っています。`);return}
+      warmup.push(raw);if(warmup.length>GPS.warmupCount)warmup.shift();
+      setStatus('GPSを安定させています',`良好な測位を収集中 ${warmup.length}/${GPS.warmupCount}`);
+      if(warmup.length<GPS.warmupCount)return;
+      const first=initializeGpsFilter();appendPoint(first,true);
+      setStatus('補正してリアルタイム記録中','開始位置を安定化しました。以降はGPSノイズを除去して描画します。');
+      return;
+    }
+
+    if(acc>GPS.maxAccuracy){rejectedFixes++;setStatus('精度の悪い測位を除外',`現在の精度は約 ${Math.round(acc)} m。55 mを超えたため走行線には使いません。`);return}
+    const filtered=filterGps(raw);
+    if(!filtered){setStatus('GPSジャンプを除外',`不自然な瞬間移動を検出して無視しました。除外 ${rejectedFixes} 回。`);return}
+
+    updateCurrentMarker(filtered,true);
+    const prev=points.at(-1),move=prev?hav(prev,filtered):Infinity,deadband=clamp(acc*.08,1.2,3),age=lastRenderedT===null?Infinity:filtered.t-lastRenderedT;
+    if(!prev||move>=deadband||(age>5000&&move>=.5))appendPoint(filtered,false);
+    else requestAnimationFrame(updateMetrics);
+    setStatus('補正してリアルタイム記録中',`${points.length} 地点を描画。微小ブレと異常値を自動除外しています${rejectedFixes?`（除外 ${rejectedFixes} 回）`:''}。`);
   }
 
   function tick(){updateMetrics()}
   function startTimer(){startAt=Date.now();timerId=setInterval(tick,250)}
-  function stopTimer(){if(timerId) clearInterval(timerId);timerId=null;if(startAt){elapsedMs+=Date.now()-startAt;startAt=null}updateMetrics()}
+  function stopTimer(){if(timerId)clearInterval(timerId);timerId=null;if(startAt){elapsedMs+=Date.now()-startAt;startAt=null}updateMetrics()}
   function setRunning(v,label){isRunning=v;startBtn.disabled=v;stopBtn.disabled=!v;demoBtn.disabled=v;modeEl.textContent=label||(v?'記録中':'待機中');modeEl.classList.toggle('live',v);if(v)modeEl.innerHTML='<span class="live-dot"></span>'+(label||'記録中')}
 
   function startReal(){
     if(!navigator.geolocation){setStatus('このブラウザではGPSを使えません','Geolocation APIに対応したSafari/Chromeで開いてください。');return}
-    reset(false);
-    setRunning(true,'GPS LIVE');
-    setStatus('位置情報を取得中','最初のGPSを受信すると、地図が現在地へ移動し、その後は走行ルートをリアルタイム描画します。');
-    startTimer();
-    watchId=navigator.geolocation.watchPosition(pos=>{
-      const c=pos.coords;
-      if(Number.isFinite(c.accuracy)&&c.accuracy>100){
-        accuracyEl.textContent=Math.round(c.accuracy);
-        setStatus('GPS精度を待っています',`現在の精度は約 ${Math.round(c.accuracy)} m です。`);
-        return;
-      }
-      appendPoint({lat:c.latitude,lng:c.longitude,alt:c.altitude,acc:c.accuracy,t:pos.timestamp},true);
-      setStatus('リアルタイム記録中',`${points.length} 地点を記録。GPS更新のたびに地図へ描画しています。`);
-    },err=>{
-      setStatus('位置情報を取得できません',err.code===1?'Safariの位置情報許可を確認してください。':err.message);
-      stop();
-    },{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+    reset(false);setRunning(true,'GPS補正 LIVE');setStatus('位置情報を取得中','最初に良好なGPSを3回取得してから記録を開始します。');startTimer();
+    watchId=navigator.geolocation.watchPosition(handleGpsPosition,err=>{setStatus('位置情報を取得できません',err.code===1?'Safariの位置情報許可を確認してください。':err.message);stop()},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
   }
 
-  function stop(){if(watchId!==null) navigator.geolocation.clearWatch(watchId);watchId=null;if(demoTimer) clearInterval(demoTimer);demoTimer=null;stopTimer();setRunning(false,'完了');if(points.length>1) map.fitBounds(line.getBounds(),{padding:[28,28]});setStatus(points.length?'記録を終了しました':'記録データはありません',points.length?`${points.length} 地点・${(totalMeters/1000).toFixed(2)} km を記録しました。`:'位置情報を取得する前に終了しました。')}
+  function stop(){if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;if(demoTimer)clearInterval(demoTimer);demoTimer=null;stopTimer();setRunning(false,'完了');if(points.length>1)map.fitBounds(line.getBounds(),{padding:[28,28]});setStatus(points.length?'記録を終了しました':'記録データはありません',points.length?`${points.length} 地点・${(totalMeters/1000).toFixed(2)} km を記録しました。GPS異常値は ${rejectedFixes} 回除外しました。`:'位置情報を取得する前に終了しました。')}
 
-  function reset(update=true){if(watchId!==null) navigator.geolocation.clearWatch(watchId);watchId=null;if(timerId) clearInterval(timerId);timerId=null;if(demoTimer) clearInterval(demoTimer);demoTimer=null;points=[];startAt=null;elapsedMs=0;totalMeters=0;totalAscent=0;isRunning=false;line.setLatLngs([]);if(currentMarker){map.removeLayer(currentMarker);currentMarker=null}if(startMarker){map.removeLayer(startMarker);startMarker=null}distanceEl.textContent='0.00';timeEl.textContent='00:00';altitudeEl.textContent='—';accuracyEl.textContent='—';ascentEl.textContent='累積上昇 0 m';setRunning(false,'待機中');drawElevation();if(update)setStatus('リセットしました','「記録開始」で実GPS、「デモ走行」でサンプルを試せます。')}
+  function reset(update=true){
+    if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;if(timerId)clearInterval(timerId);timerId=null;if(demoTimer)clearInterval(demoTimer);demoTimer=null;
+    points=[];startAt=null;elapsedMs=0;totalMeters=0;totalAscent=0;isRunning=false;warmup=[];origin=null;kx=null;ky=null;filterT=null;rejectedFixes=0;lastRenderedT=null;altitudeState=null;lastGoodRawAlt=null;ascentBaseAlt=null;
+    line.setLatLngs([]);if(currentMarker){map.removeLayer(currentMarker);currentMarker=null}if(startMarker){map.removeLayer(startMarker);startMarker=null}
+    distanceEl.textContent='0.00';timeEl.textContent='00:00';altitudeEl.textContent='—';accuracyEl.textContent='—';ascentEl.textContent='累積上昇 0 m';setRunning(false,'待機中');drawElevation();
+    if(update)setStatus('リセットしました','「記録開始」でGPS補正付き実走、「デモ走行」でサンプルを試せます。');
+  }
 
-  function demo(){reset(false);setRunning(true,'LIVE DEMO');setStatus('デモ走行中','GPSと同じ処理で、地点ごとにルートをリアルタイム描画しています。');startTimer();const base=[35.6812,139.7671],samples=42;let i=0;demoTimer=setInterval(()=>{const a=i/samples*Math.PI*2;appendPoint({lat:base[0]+.004*Math.sin(a)*.72,lng:base[1]+.005*Math.cos(a),alt:26+10*Math.sin(a*1.5)+i*.18,acc:5},true);i++;if(i>samples) stop()},250)}
+  function demo(){
+    reset(false);setRunning(true,'LIVE DEMO');setStatus('デモ走行中','滑らかなサンプルルートをリアルタイム描画しています。');startTimer();
+    const base=[35.6812,139.7671],samples=42;let i=0;
+    demoTimer=setInterval(()=>{const a=i/samples*Math.PI*2;appendPoint({lat:base[0]+.004*Math.sin(a)*.72,lng:base[1]+.005*Math.cos(a),alt:26+10*Math.sin(a*1.5)+i*.18,acc:5,t:Date.now()},true);i++;if(i>samples)stop()},250);
+  }
 
-  startBtn.addEventListener('click',startReal);
-  stopBtn.addEventListener('click',stop);
-  demoBtn.addEventListener('click',demo);
-  resetBtn.addEventListener('click',()=>reset(true));
-  window.addEventListener('resize',resizeCanvas);
-  resizeCanvas();
+  startBtn.addEventListener('click',startReal);stopBtn.addEventListener('click',stop);demoBtn.addEventListener('click',demo);resetBtn.addEventListener('click',()=>reset(true));window.addEventListener('resize',resizeCanvas);resizeCanvas();
 })();
 </script>
 </body>
