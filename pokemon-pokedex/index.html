@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Poké Mini — かわいいポケモン図鑑</title>
+<style>
+:root{--bg:#fff8fb;--card:#fff;--ink:#493f48;--muted:#8c7d88;--pink:#ff8db3;--pink2:#ffd6e5;--line:#f2dce5;--shadow:0 10px 30px rgba(108,70,90,.10)}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;background:linear-gradient(180deg,#fff5fa 0,#fffdf8 100%);color:var(--ink);min-height:100vh}
+button,input{font:inherit}button{cursor:pointer}.wrap{width:min(100%,860px);margin:auto;padding:20px 16px 48px}.hero{text-align:center;padding:14px 0 16px}.logo{font-size:30px;font-weight:900;letter-spacing:-.04em}.logo span{color:var(--pink)}.sub{color:var(--muted);font-size:14px;margin-top:6px}.search{position:sticky;top:0;z-index:5;padding:10px 0 14px;background:linear-gradient(180deg,rgba(255,248,251,.98),rgba(255,248,251,.87),transparent)}.searchbox{display:flex;gap:8px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:8px;box-shadow:var(--shadow)}.searchbox input{min-width:0;flex:1;border:0;outline:0;padding:8px 10px;background:transparent;color:var(--ink)}.searchbox button{border:0;border-radius:13px;background:var(--pink);color:#fff;padding:9px 14px;font-weight:800}.section-head{display:flex;align-items:end;justify-content:space-between;margin:10px 2px 12px}.section-head h2{font-size:18px;margin:0}.section-head small{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{border:1px solid var(--line);background:rgba(255,255,255,.92);border-radius:22px;padding:14px;text-align:left;box-shadow:var(--shadow);transition:.18s transform,.18s box-shadow;min-width:0}.card:active{transform:scale(.98)}.art{aspect-ratio:1.12/1;border-radius:18px;background:linear-gradient(135deg,#fff1f7,#fff9dc);display:grid;place-items:center;overflow:hidden}.art img{width:88%;height:88%;object-fit:contain;image-rendering:auto}.num{color:#b7a7b1;font-size:11px;font-weight:800;margin-top:10px}.name{font-size:17px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.en{color:var(--muted);font-size:11px;margin-top:2px}.types{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.pill{font-size:11px;font-weight:800;padding:5px 9px;border-radius:999px;background:#f6eef2}.loading,.empty{text-align:center;color:var(--muted);padding:36px 10px}.overlay{position:fixed;inset:0;z-index:20;background:rgba(50,36,46,.32);display:none;align-items:flex-end;justify-content:center}.overlay.show{display:flex}.sheet{width:min(100%,720px);max-height:92vh;overflow:auto;background:#fffdfd;border-radius:28px 28px 0 0;padding:10px 18px calc(28px + env(safe-area-inset-bottom));box-shadow:0 -16px 50px rgba(60,30,45,.18)}.handle{width:42px;height:5px;border-radius:9px;background:#eadde3;margin:3px auto 10px}.close{float:right;border:0;background:#f8edf2;color:#6e5c67;width:38px;height:38px;border-radius:50%;font-size:20px}.detail-top{clear:both;display:grid;grid-template-columns:46% 1fr;gap:16px;align-items:center}.detail-img{aspect-ratio:1;border-radius:24px;background:linear-gradient(135deg,#fff0f6,#fff7cf);display:grid;place-items:center}.detail-img img{width:90%;height:90%;object-fit:contain}.detail h1{margin:0;font-size:26px}.detail .jp{font-weight:900}.detail .meta{color:var(--muted);font-size:13px;margin-top:5px}.facts{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:18px 0}.fact{background:#fff6f9;border:1px solid var(--line);border-radius:16px;padding:11px}.fact b{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}.fact span{font-weight:900}.stats{margin-top:14px}.stats h3{font-size:15px;margin:0 0 10px}.stat{display:grid;grid-template-columns:82px 36px 1fr;align-items:center;gap:7px;margin:8px 0;font-size:12px}.bar{height:8px;border-radius:999px;background:#f3e8ed;overflow:hidden}.bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#ffb0cb,#ff7da9)}.error{margin:12px 2px;color:#b34e72;font-size:13px;display:none}
+@media(min-width:620px){.grid{grid-template-columns:repeat(4,1fr)}.wrap{padding-top:28px}.card{padding:12px}.logo{font-size:36px}.overlay{align-items:center}.sheet{border-radius:28px;max-height:88vh}.detail-top{grid-template-columns:280px 1fr}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="hero"><div class="logo">Poké <span>Mini</span></div><div class="sub">かわいいポケモンを、ちいさな図鑑に。</div></header>
+  <div class="search"><form class="searchbox" id="searchForm"><input id="searchInput" autocomplete="off" placeholder="名前 / 英名 / No. で検索" aria-label="ポケモンを検索"><button>検索</button></form><div class="error" id="error"></div></div>
+  <div class="section-head"><h2>かわいい10匹</h2><small>タップで詳細</small></div>
+  <section class="grid" id="grid"><div class="loading">Pokémonを呼んでいます…</div></section>
+</main>
+<div class="overlay" id="overlay" role="dialog" aria-modal="true"><article class="sheet"><div class="handle"></div><button class="close" id="close" aria-label="閉じる">×</button><div id="detail" class="detail"></div></article></div>
+<script>
+const API='https://pokeapi.co/api/v2';
+const PICKS=['pikachu','eevee','vulpix','jigglypuff','clefairy','togepi','skitty','pachirisu','emolga','sylveon'];
+const TYPE={normal:'ノーマル',fire:'ほのお',water:'みず',electric:'でんき',grass:'くさ',ice:'こおり',fighting:'かくとう',poison:'どく',ground:'じめん',flying:'ひこう',psychic:'エスパー',bug:'むし',rock:'いわ',ghost:'ゴースト',dragon:'ドラゴン',dark:'あく',steel:'はがね',fairy:'フェアリー'};
+const STAT={hp:'HP',attack:'こうげき',defense:'ぼうぎょ','special-attack':'とくこう','special-defense':'とくぼう',speed:'すばやさ'};
+const cache=new Map();
+const $=s=>document.querySelector(s); const grid=$('#grid'),overlay=$('#overlay'),detail=$('#detail'),error=$('#error');
+function sprite(p){return p.sprites.other?.['official-artwork']?.front_default||p.sprites.front_default||''}
+async function getPokemon(q){q=String(q).trim().toLowerCase();if(cache.has(q))return cache.get(q);const r=await fetch(`${API}/pokemon/${encodeURIComponent(q)}`);if(!r.ok)throw new Error('見つかりませんでした');const p=await r.json();const s=await fetch(p.species.url).then(r=>r.json());const jp=s.names.find(n=>n.language.name==='ja')?.name||p.name;const data={...p,jp};cache.set(q,data);cache.set(String(p.id),data);cache.set(p.name,data);return data}
+function typePills(p){return p.types.map(t=>`<span class="pill">${TYPE[t.type.name]||t.type.name}</span>`).join('')}
+function card(p){return `<button class="card" data-name="${p.name}"><div class="art"><img loading="lazy" src="${sprite(p)}" alt="${p.jp}"></div><div class="num">No. ${String(p.id).padStart(4,'0')}</div><div class="name">${p.jp}</div><div class="en">${p.name}</div><div class="types">${typePills(p)}</div></button>`}
+async function load(){try{const ps=await Promise.all(PICKS.map(getPokemon));grid.innerHTML=ps.map(card).join('')}catch(e){grid.innerHTML='<div class="empty">読み込みに失敗しました。通信状態を確認してください。</div>'}}
+function show(p){const stats=p.stats.map(s=>`<div class="stat"><span>${STAT[s.stat.name]||s.stat.name}</span><b>${s.base_stat}</b><div class="bar"><i style="width:${Math.min(100,s.base_stat/1.8)}%"></i></div></div>`).join('');detail.innerHTML=`<div class="detail-top"><div class="detail-img"><img src="${sprite(p)}" alt="${p.jp}"></div><div><div class="num">No. ${String(p.id).padStart(4,'0')}</div><h1 class="jp">${p.jp}</h1><div class="meta">${p.name}</div><div class="types">${typePills(p)}</div></div></div><div class="facts"><div class="fact"><b>高さ</b><span>${(p.height/10).toFixed(1)} m</span></div><div class="fact"><b>重さ</b><span>${(p.weight/10).toFixed(1)} kg</span></div></div><div class="stats"><h3>能力値</h3>${stats}</div>`;overlay.classList.add('show');document.body.style.overflow='hidden'}
+async function openPokemon(q){error.style.display='none';try{show(await getPokemon(q))}catch(e){error.textContent='そのポケモンは見つかりませんでした。英名・図鑑番号でも検索できます。';error.style.display='block'}}
+grid.addEventListener('click',e=>{const c=e.target.closest('.card');if(c)openPokemon(c.dataset.name)});
+$('#searchForm').addEventListener('submit',e=>{e.preventDefault();const q=$('#searchInput').value;if(q.trim())openPokemon(q)});
+function close(){overlay.classList.remove('show');document.body.style.overflow=''}
+$('#close').onclick=close;overlay.addEventListener('click',e=>{if(e.target===overlay)close()});addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+load();
+</script>
+</body>
+</html>
