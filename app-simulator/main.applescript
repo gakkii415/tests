@@ -1,7 +1,7 @@
--- アプリ画面確認 v11
+-- アプリ画面確認 v12
 -- GitHub上のExpoアプリをすばやく見つけ、iPhone / Androidで確認します。
 
-property appVersion : "v11"
+property appVersion : "v12"
 property githubOwner : "gakkii415"
 property supportRoot : (POSIX path of (path to home folder)) & "Library/Application Support/アプリ画面確認"
 property appsRoot : supportRoot & "/アプリ"
@@ -238,7 +238,9 @@ end expoPackageName
 on prepareRepository(repoFullName, repoPath, githubToken)
 	set authValue to do shell script "printf %s " & quoted form of ("x-access-token:" & githubToken) & " | /usr/bin/base64"
 	if my folderExists(repoPath) then
-		set commandText to "cd " & quoted form of repoPath & " && git -c http.extraHeader=" & quoted form of ("Authorization: Basic " & authValue) & " pull --ff-only"
+		-- このフォルダは確認アプリ専用の作業コピーです。npmが生成した未追跡ファイルと
+		-- GitHub側で後から追加された同名ファイルが衝突しても、GitHubを正本として同期します。
+		set commandText to "cd " & quoted form of repoPath & " && git -c http.extraHeader=" & quoted form of ("Authorization: Basic " & authValue) & " fetch --prune origin && git reset --hard '@{upstream}'"
 	else
 		set commandText to "git -c http.extraHeader=" & quoted form of ("Authorization: Basic " & authValue) & " clone " & quoted form of ("https://github.com/" & repoFullName & ".git") & " " & quoted form of repoPath
 	end if
