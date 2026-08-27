@@ -1,7 +1,7 @@
--- アプリ画面確認 v10
+-- アプリ画面確認 v11
 -- GitHub上のExpoアプリをすばやく見つけ、iPhone / Androidで確認します。
 
-property appVersion : "v10"
+property appVersion : "v11"
 property githubOwner : "gakkii415"
 property supportRoot : (POSIX path of (path to home folder)) & "Library/Application Support/アプリ画面確認"
 property appsRoot : supportRoot & "/アプリ"
@@ -125,56 +125,94 @@ on tokenWorks(githubToken)
 end tokenWorks
 
 on findExpoApplications(githubToken)
+	set results to {}
+	set seenKeys to {}
+	set discoverySucceeded to false
+	set matchText to ""
+	
+	-- サブフォルダ内のExpoアプリも見つけるため、まずコード検索を使います。
+	-- 新しいリポジトリは検索インデックス作成前だと0件になるため、後段でルートを直接確認します。
 	set searchUrl to "https://api.github.com/search/code?q=%22expo%22+filename%3Apackage.json+user%3A" & githubOwner & "&per_page=100"
 	try
 		set searchJson to do shell script my apiCommand(githubToken, searchUrl, "application/vnd.github+json")
-	on error
-		return {false, {}}
-	end try
-	
-	set jsCode to "ObjC.import('stdlib'); const s=JSON.parse($.getenv('SEARCH_JSON')); (s.items||[]).map(x=>[x.repository.name,x.repository.full_name,x.path].join('\\t')).join('\\n')"
-	try
+		set jsCode to "ObjC.import('stdlib'); const s=JSON.parse($.getenv('SEARCH_JSON')); (s.items||[]).map(x=>[x.repository.name,x.repository.full_name,x.path].join('\\t')).join('\\n')"
 		set matchText to do shell script "SEARCH_JSON=" & quoted form of searchJson & " /usr/bin/osascript -l JavaScript -e " & quoted form of jsCode
+		set discoverySucceeded to true
 	on error
-		return {false, {}}
+		set matchText to ""
 	end try
 	
-	if matchText is "" then return {true, {}}
-	
-	set results to {}
-	set seenKeys to {}
-	repeat with matchLine in paragraphs of matchText
-		set oldTID to AppleScript's text item delimiters
-		set AppleScript's text item delimiters to tab
-		set parts to text items of matchLine
-		set AppleScript's text item delimiters to oldTID
-		
-		if (count of parts) >= 3 then
-			set repoName to item 1 of parts
-			set repoFullName to item 2 of parts
-			set packagePath to item 3 of parts
-			set uniqueKey to repoFullName & ":" & packagePath
+	if matchText is not "" then
+		repeat with matchLine in paragraphs of matchText
+			set oldTID to AppleScript's text item delimiters
+			set AppleScript's text item delimiters to tab
+			set parts to text items of matchLine
+			set AppleScript's text item delimiters to oldTID
 			
-			if my listContains(seenKeys, uniqueKey) is false then
-				set end of seenKeys to uniqueKey
-				set packageJson to my fetchPackageJson(githubToken, repoFullName, packagePath)
-				if packageJson is not "" then
-					set appName to my expoPackageName(packageJson)
-					if appName is not false then
-						set subPath to my parentPath(packagePath)
-						if subPath is "" then
-							set appLabel to repoName
-						else
-							set appLabel to repoName & " / " & appName
+			if (count of parts) >= 3 then
+				set repoName to item 1 of parts
+				set repoFullName to item 2 of parts
+				set packagePath to item 3 of parts
+				set uniqueKey to repoFullName & ":" & packagePath
+				
+				if my listContains(seenKeys, uniqueKey) is false then
+					set end of seenKeys to uniqueKey
+					set packageJson to my fetchPackageJson(githubToken, repoFullName, packagePath)
+					if packageJson is not "" then
+						set appName to my expoPackageName(packageJson)
+						if appName is not false then
+							set subPath to my parentPath(packagePath)
+							if subPath is "" then
+								set appLabel to repoName
+							else
+								set appLabel to repoName & " / " & appName
+							end if
+							set end of results to {appLabel, repoName, repoFullName, subPath}
 						end if
-						set end of results to {appLabel, repoName, repoFullName, subPath}
 					end if
 				end if
 			end if
-		end if
-	end repeat
+		end repeat
+	end if
 	
-	return {true, results}
+	-- コード検索にまだ出ない新規リポジトリも拾えるよう、所有リポジトリのルートを直接確認します。
+	set repoText to ""
+	set reposUrl to "https://api.github.com/user/repos?affiliation=owner&sort=updated&per_page=100"
+	try
+		set reposJson to do shell script my apiCommand(githubToken, reposUrl, "application/vnd.github+json")
+		set jsCode to "ObjC.import('stdlib'); const repos=JSON.parse($.getenv('REPOS_JSON')); const owner=$.getenv('GITHUB_OWNER').toLowerCase(); (Array.isArray(repos)?repos:[]).filter(r=>r.owner&&r.owner.login.toLowerCase()===owner&&!r.archived).map(r=>[r.name,r.full_name].join('\\t')).join('\\n')"
+		set repoText to do shell script "REPOS_JSON=" & quoted form of reposJson & " GITHUB_OWNER=" & quoted form of githubOwner & " /usr/bin/osascript -l JavaScript -e " & quoted form of jsCode
+		set discoverySucceeded to true
+	on error
+		set repoText to ""
+	end try
+	
+	if repoText is not "" then
+		repeat with repoLine in paragraphs of repoText
+			set oldTID to AppleScript's text item delimiters
+			set AppleScript's text item delimiters to tab
+			set parts to text items of repoLine
+			set AppleScript's text item delimiters to oldTID
+			
+			if (count of parts) >= 2 then
+				set repoName to item 1 of parts
+				set repoFullName to item 2 of parts
+				set packagePath to "package.json"
+				set uniqueKey to repoFullName & ":" & packagePath
+				
+				if my listContains(seenKeys, uniqueKey) is false then
+					set end of seenKeys to uniqueKey
+					set packageJson to my fetchPackageJson(githubToken, repoFullName, packagePath)
+					if packageJson is not "" then
+						set appName to my expoPackageName(packageJson)
+						if appName is not false then set end of results to {repoName, repoName, repoFullName, ""}
+					end if
+				end if
+			end if
+		end repeat
+	end if
+	
+	return {discoverySucceeded, results}
 end findExpoApplications
 
 on fetchPackageJson(githubToken, repoFullName, packagePath)
