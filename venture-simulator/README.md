@@ -26,7 +26,7 @@ Never commit an OpenAI API key to this repository or ship it in browser code.
 
 ## Run
 
-Open `index.html` directly, or serve the directory with any static HTTP server.
+Publish with GitHub Pages or serve this directory with a static HTTP server. The small `index.html` loader reconstructs the app from the four payload files at runtime.
 
 ## Data
 
